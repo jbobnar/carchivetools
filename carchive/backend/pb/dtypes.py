@@ -85,7 +85,7 @@ class EnumTypeDesc(object):
     def encode_vector(value, sample_pb):
         sample_pb.val.extend(int(x) for x in value)
 
-_desc = [DoubleTypeDesc, Int32TypeDesc, StringTypeDesc, EnumTypeDesc]
+_desc = [DoubleTypeDesc, Int32TypeDesc, StringTypeDesc, EnumTypeDesc, FloatTypeDesc]
 
 _ALL_CLASS_DESCRIPTIONS, _ALL_TYPE_DESCRIPTIONS = {}, {}
 for T in _desc:
