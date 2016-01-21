@@ -85,7 +85,11 @@ def cmd(archive=None, opt=None, args=None, conf=None, **kws):
         
         # Find the last sample timestamp for this PV.
         # This is used as-is as a lower bound filter after the query.
-        last_timestamp = pb_last.find_last_sample_timestamp(pv, out_dir, gran, delimiters)
+        try:
+            last_timestamp = pb_last.find_last_sample_timestamp(pv, out_dir, gran, delimiters)
+        except:
+            pvlog.error('Cannot retrieve last timestamp')
+            continue 
         
         pvlog.info('Last timestamp: {0}'.format(last_timestamp))
         

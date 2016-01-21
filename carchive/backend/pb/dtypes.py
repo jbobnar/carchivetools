@@ -10,6 +10,21 @@ from carchive.backend import EPICSEvent_pb2 as pbt
     dtypes.py provides routines to convert the channel archiver data types to archiver appliance data types.
 '''
 
+class FloatTypeDesc(object):
+    ORIG_TYPE = 3
+    PB_TYPE = (pbt.SCALAR_FLOAT, pbt.WAVEFORM_FLOAT)
+    PB_CLASS = (pbt.ScalarFloat, pbt.VectorFloat)
+    PB_NAME = ('DBR_SCALAR_FLOAT','DBR_WAVEFORM_FLOAT')
+    NAME = 'Float'
+    
+    @staticmethod
+    def encode_scalar(value, sample_pb):
+        sample_pb.val = float(value)
+    
+    @staticmethod
+    def encode_vector(value, sample_pb):
+        sample_pb.val.extend(float(x) for x in value)
+
 class DoubleTypeDesc(object):
     ORIG_TYPE = 3
     PB_TYPE = (pbt.SCALAR_DOUBLE, pbt.WAVEFORM_DOUBLE)
@@ -96,5 +111,5 @@ class UnknownPbTypeError(Exception):
 def get_pb_class_for_type(pb_type):
     clazz = _ALL_CLASS_DESCRIPTIONS[pb_type]
     if clazz == None:
-        raise UnknownPbTypeError('Unknown PB type')
+        raise UnknownPbTypeError('Unknown PB type {0}'.format(pb_type))
     return clazz

@@ -8,6 +8,9 @@ import google.protobuf as protobuf
 from carchive.backend import EPICSEvent_pb2 as pbt
 from carchive.backend.pb import escape as pb_escape
 from carchive.backend.pb import dtypes as pb_dtypes
+import os, errno
+
+DELIMITER = '\x1B'
 
 class EmptyFileError(Exception):
     pass
@@ -48,7 +51,11 @@ def verify_stream(stream, pb_type=None, pv_name=None, year=None, upper_ts_bound=
     # Will be returning the last timestamp (if any).
     last_timestamp = None
     
-    # Iterate the file to the end, checking for problems.
+    pos = find_position(stream)
+            
+    stream.seek(pos,os.SEEK_SET)
+    line_iterator = pb_escape.iter_lines(stream)
+    
     try:
         for sample_data in line_iterator:
             # Parse sample.
@@ -65,7 +72,7 @@ def verify_stream(stream, pb_type=None, pv_name=None, year=None, upper_ts_bound=
                     raise VerificationError('Found newer sample')
             
             last_timestamp = sample_timestamp
-            
+        
     except pb_escape.IterationError as e:
         raise VerificationError('Reading samples: {0}'.format(e))
     
@@ -73,3 +80,28 @@ def verify_stream(stream, pb_type=None, pv_name=None, year=None, upper_ts_bound=
         'last_timestamp': last_timestamp,
         'year': header_pb.year,
     }
+
+# Find the position which is the beginning of nearly the last sample in the file
+def find_position(stream):
+    stream.seek(0, os.SEEK_END)
+    linecount = 0
+    n = 3
+    bsize = 2048
+    
+    while linecount <= n + 1:
+        # read at least n lines + 1 more; we need to skip a partial line later on
+        try:
+            stream.seek(-bsize, os.SEEK_CUR)           # go backwards
+            linecount += stream.read(bsize).count(DELIMITER) # count newlines
+            stream.seek(-bsize, os.SEEK_CUR)           # go back again
+        except IOError, e:
+            if e.errno == errno.EINVAL:
+                # Attempted to seek past the start, can't go further
+                bsize = stream.tell()
+                stream.seek(0, os.SEEK_SET)
+                linecount += stream.read(bsize).count(DELIMITER)
+                break
+            raise  # Some other I/O exception, re-raise
+    stream.readline() # move to the beginning of a line 
+    pos = stream.tell()  
+    return pos;
