@@ -1,16 +1,26 @@
-carchivetools (2.1) UNRELEASED; urgency=low
+carchivetools (2.2) unstable; urgency=low
+
+  * untwisted: Don't search for EXACT PVs
+  * util: handle connection closed early due to count limit
+  * add HTTP Agent concurrent request limit
+
+ -- Michael Davidsaver <mdavidsaver@bnl.gov>  Mon, 20 Jul 2015 18:20:19 -0400
+
+carchivetools (2.1) unstable; urgency=low
 
   * appl: use server caplotbinning() operator for fetchplot()
           Parallelized sample decoding and other performance optimizations
           Report severity 103 for single sample decode errors
+          implement fetchsnap()
   * arget: Exports Archiver Appliance data files with -E pbraw
            add --skip-first
+  * arsnap: Fix detection fo scalar
   * a2aproxy: improve robustness
   * untwisted: arget() correctly handles when a single string argument expands
           to many PVs.
   * carchive.repart: Archiver Appliance file repartitioning
 
- -- Michael Davidsaver <mdavidsaver@bnl.gov>  Fri, 20 Mar 2015 11:13:46 -0400
+ -- Michael Davidsaver <mdavidsaver@bnl.gov>  Mon, 06 Apr 2015 11:37:59 -0400
 
 carchivetools (2.0) unstable; urgency=low
 

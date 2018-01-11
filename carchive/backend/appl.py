@@ -16,14 +16,13 @@ from cStringIO import StringIO
 import numpy as np
 
 from twisted.internet import defer, protocol, reactor, threads
-
-from twisted.web.client import Agent, ResponseDone
-from twisted.web._newclient import ResponseFailed
+from twisted.python import failure
+from twisted.web.client import ResponseDone
 
 from ..date import isoString, makeTime, timeTuple
 from ..dtype import dbr_time
 from ..status import get_status
-from ..util import BufferingLineProtocol
+from ..util import BufferingLineProtocol, LimitedAgent
 from .EPICSEvent_pb2 import PayloadInfo
 
 from carchive.backend.pbdecode import decoders, unescape, DecodeError, linesplitter
@@ -68,8 +67,13 @@ class PBReceiver(BufferingLineProtocol):
     # responce can be processed at once.
     _rx_buf_size = 2**20
 
+    # Enable processing of in a worker thread.
+    #
+    # User callbacks still run in the reactor thread
+    inthread = True
+
     def __init__(self, cb, cbArgs=(), cbKWs={}, nreport=1000,
-                 count=None, name=None, cadiscon=0, inthread=False):
+                 count=None, name=None, cadiscon=0, inthread=None):
         BufferingLineProtocol.__init__(self)
         self._S, self.defer = StringIO(), defer.Deferred()
         self.name, self.nreport, self.cadiscon = name, nreport, cadiscon
@@ -77,7 +81,8 @@ class PBReceiver(BufferingLineProtocol):
         self.header, self._dec, self.name = None, None, name
         self._count_limit, self._count = count, 0
         self._CB, self._CB_args, self._CB_kws = cb, cbArgs, cbKWs
-        self.inthread = inthread
+        if inthread is not None:
+            self.inthread = inthread # override default
 
     def processLines(self, lines, prev=None):
         _log.debug("Process %d lines for %s", len(lines), self.name)
@@ -156,7 +161,8 @@ class PBReceiver(BufferingLineProtocol):
                     assert not isinstance(D, defer.Deferred), "appl does not support callbacks w/ deferred"
 
             if self._count_limit and self._count>=self._count_limit:
-                _log.debug("%s count limit reached", self.name)
+                _log.debug("%s count limit reached (%d,%d)", self.name,
+                           self._count, self._count_limit)
                 self.transport.stopProducing()
                 break
 
@@ -172,6 +178,8 @@ class JSONReceiver(protocol.Protocol):
     def dataReceived(self, raw):
         self._S.write(raw)
     def connectionLost(self, reason):
+        if not isinstance(reason, failure.Failure):
+            reason = failure.Failure(reason)
         if reason.check(ResponseDone):
             S = self._S.getvalue()
             try:
@@ -196,7 +204,8 @@ def fetchJSON(agent, url, code=200):
 
 @defer.inlineCallbacks
 def getArchive(conf):
-    A = Agent(reactor, connectTimeout=5)
+    A = LimitedAgent(reactor, connectTimeout=5,
+                     maxRequests=conf.getint('maxrequests', 100))
 
     R = yield A.request('GET', conf['url'])
 
@@ -257,9 +266,13 @@ class Appliance(object):
                 pattern=pattern+'.*'
 
         url='%s/getAllPVs?%s'%(self._info['mgmtURL'],urlencode({'regex':pattern}))
-        _log.debug("Query: %s", url)
 
-        R = yield fetchJSON(self._agent, url)
+        yield self._agent.acquire()
+        try:
+            _log.debug("Query: %s", url)
+            R = yield fetchJSON(self._agent, url)
+        finally:
+            self._agent.release()
 
         if not breakDown:
             meta = makeTime(0), makeTime(time.time())
@@ -285,19 +298,30 @@ class Appliance(object):
         }
 
         url=str('%s/data/getData.raw?%s'%(self._info['dataRetrievalURL'],urlencode(Q)))
-        _log.debug("Query: %s", url)
 
-        R = yield self._agent.request('GET', url)
-
-        if R.code!=200:
-            _log.error("%s for %s", R.code, pv)
-            defer.returnValue(0)
-
-        P = PBReceiver(callback, cbArgs, cbKWs, name=pv,
-                       nreport=chunkSize, count=count, cadiscon=cadiscon)
+        yield self._agent.acquire()
+        try:
+            _log.debug("Query: %s", url)
+            R = yield self._agent.request('GET', url)
     
-        R.deliverBody(P)
-        C = yield P.defer
+            if R.code!=200:
+                _log.error("%s for %s", R.code, pv)
+                defer.returnValue(0)
+    
+            P = PBReceiver(callback, cbArgs, cbKWs, name=pv,
+                           nreport=chunkSize, count=count, cadiscon=cadiscon)
+        
+            R.deliverBody(P)
+            C = yield P.defer
+        finally:
+            self._agent.release()
+
+        if P._tend is not None and _log.isEnabledFor(logging.DEBUG):
+            elapsed = P._tend - P._tstart
+            rate = P._nbytes/elapsed
+            _log.debug("%s rx'd %d bytes in %f sec (%f Bps)",
+                       pv, P._nbytes, elapsed, rate)
+            
 
         defer.returnValue(C)
 

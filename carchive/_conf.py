@@ -7,7 +7,38 @@ Copyright 2015 Brookhaven Science Assoc.
 import ConfigParser
 
 class ConfigDict(object):
-    def __init__(self, P, S):
+    """dict-like wrapper around a ConfigParser
+
+    >>> P=ConfigParser.SafeConfigParser()
+    >>> P.set('DEFAULT', 'foo', 'bar')
+    >>> P.set('DEFAULT', 'baz', '5')
+    >>> D=ConfigDict(P, 'DEFAULT')
+    >>> D['foo']
+    'bar'
+    >>> D['baz']
+    '5'
+    >>> D.get('baz')
+    '5'
+    >>> D.getint('baz')
+    5
+    >>> D.get('unknown')
+    >>> D.getint('unknown', 42)
+    42
+    >>> D=ConfigDict({'A':'B', 'C':'4'})
+    >>> D['A']
+    'B'
+    >>> D.getint('C')
+    4
+    >>>
+    """
+    def __init__(self, P, S='DEFAULT'):
+        if isinstance(P, dict):
+            D = P
+            P = ConfigParser.SafeConfigParser()
+            if S!='DEFAULT':
+                P.add_section(S)
+            for K,V in D.items():
+                P.set(S, K, V)
         self._P, self._S = P, S
 
     def __iter__(self):
@@ -59,6 +90,13 @@ class ConfigDict(object):
     def write(self, fd):
         self._P.write(fd)
 
+    def todict(self):
+        return dict(self.iteritems())
+
+    def __str__(self):
+        return str(self.todict())
+
+    __repr__ = __str__
 
 def loadConfig(N):
     import os.path
@@ -67,7 +105,6 @@ def loadConfig(N):
           'host':'%%(host)s',
           'defaultarchs':'*',
           'defaultcount':'0',
-          'maxrequests':'10',
           'maxquery':'30',
         }
     cf=ConfigParser.SafeConfigParser(defaults=dflt)

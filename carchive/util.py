@@ -9,13 +9,14 @@ _log = logging.getLogger(__name__)
 import re, collections, time
 from cStringIO import StringIO
 
+from twisted.web.client import Agent
 from twisted.web.server import Site
 from twisted.application.internet import TCPServer
 from twisted.internet import defer, protocol, error
 from twisted.python import failure
 #defer.Deferred.debug=1
 
-from twisted.web.client import ResponseDone
+from twisted.web.client import ResponseDone, ResponseFailed
 
 class HandledError(Exception):
     pass
@@ -210,7 +211,11 @@ class BufferingLineProtocol(protocol.Protocol):
         self.rxbuf.write('x')
         self.rxbuf.truncate(0)
 
+        self._nbytes, self._tstart = 0, time.time()
+        self._tend = None
+
     def dataReceived(self, data):
+        self._nbytes += len(data)
         self.rxbuf.write(data)
         if self.rxbuf.tell()<self.rx_buf_size:
             return # below threshold
@@ -254,7 +259,20 @@ class BufferingLineProtocol(protocol.Protocol):
         if not isinstance(reason, failure.Failure):
             reason = failure.Failure(reason)
 
+        if reason.check(ResponseFailed):
+            if len(reason.value.reasons)>=1:
+                subR = reason.value.reasons[0]
+                if not isinstance(subR, failure.Failure):
+                    subR = failure.Failure(subR)
+
+                if subR.check(error.ConnectionDone):
+                    # connection closed by user request (aka. count limit reached)
+                    reason = subR
+                    self.rxbuf.truncate(0)
+
+
         if reason.check(error.ConnectionDone, ResponseDone):
+            self._tend = time.time()
             # normal completion
             if self.rxbuf.tell()>0:
                 # process remaining
@@ -277,7 +295,6 @@ class BufferingLineProtocol(protocol.Protocol):
                 return reason
 
         self._defer.chainDeferred(self.defer)
-
 
 import weakref
 class LimitedSite(Site):
@@ -319,6 +336,22 @@ class LimitedTCPServer(TCPServer):
         fact = self.args[1]
         fact.lport = port = TCPServer._getPort(self)
         return port
+
+class LimitedAgent(Agent):
+    """Coarse rate limiting for Agent requests.
+
+    Limits the number of concurrent requests to maxRequests regardless
+    of destination (we usually have only one).
+    """
+    def __init__(self, *args, **kws):
+        M = self.maxRequests = kws.pop('maxRequests', 100)
+        super(LimitedAgent,self).__init__(*args, **kws)
+        self.sem = defer.DeferredSemaphore(M)
+
+    def acquire(self):
+        return self.sem.acquire()
+    def release(self):
+        return self.sem.release()
 
 if __name__=='__main__':
     import doctest
